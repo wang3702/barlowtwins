@@ -214,7 +214,7 @@ def main_worker(gpu, args):
         print("gpu consuming after cleaning:", torch.cuda.memory_allocated() / 1024 / 1024)
         knn_test_acc = knn_monitor(model.module.encoder_q, val_loader, test_loader,
                                    global_k=min(args.knn_neighbor, len(val_loader.dataset)))
-        if writer is not None and args.gpu == 0:
+        if writer is not None and args.rank == 0:
             writer.add_scalars('Data/KNN_Acc', {'knn_acc': knn_test_acc}, epoch)
         print({'*KNN monitor Accuracy': knn_test_acc})
         if args.rank == 0:
