@@ -104,9 +104,9 @@ def main_worker(gpu, args):
     if args.rank == 0:
         args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         args.checkpoint_dir = os.path.join(args.checkpoint_dir,"Type_"+str(args.type))
-        args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        mkdir(args.checkpoint_dir)
         args.checkpoint_dir = os.path.join(args.checkpoint_dir, "group_" + str(args.group_norm_size))
-        args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        mkdir(args.checkpoint_dir)
         stats_file = open(args.checkpoint_dir / 'stats.txt', 'a', buffering=1)
         print(' '.join(sys.argv))
         print(' '.join(sys.argv), file=stats_file)
