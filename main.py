@@ -52,6 +52,8 @@ parser.add_argument("--knn_freq",type=int,default=10, help="report current accur
 parser.add_argument("--knn_batch_size",type=int, default=128, help="default batch size for knn eval")
 parser.add_argument("--knn_neighbor",type=int,default=200,help="nearest neighbor used to decide the labels")
 parser.add_argument("--tensorboard",type=int,default=0,help="use tensorboard or not")
+parser.add_argument("--group_norm_size", default=8, type=int, help="group norm size to normalize")
+
 def mkdir(path):
     path=path.strip()
     path=path.rstrip("\\")
@@ -100,6 +102,10 @@ def main_worker(gpu, args):
         world_size=args.world_size, rank=args.rank)
 
     if args.rank == 0:
+        args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        args.checkpoint_dir = os.path.join(args.checkpoint_dir,"Type_"+str(args.type))
+        args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        args.checkpoint_dir = os.path.join(args.checkpoint_dir, "group_" + str(args.group_norm_size))
         args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         stats_file = open(args.checkpoint_dir / 'stats.txt', 'a', buffering=1)
         print(' '.join(sys.argv))
@@ -292,8 +298,14 @@ class BarlowTwins(nn.Module):
                                        self.projector)
 
         # normalization layer for the representations z1 and z2
-        self.bn = nn.BatchNorm1d(sizes[-1], affine=False)
-
+        if self.type==0 or self.type==1:
+            self.bn = nn.BatchNorm1d(sizes[-1], affine=False)
+        else:
+            self.bn = nn.BatchNorm1d(sizes[-1], affine=False)
+            from ops.convert_model_togroupmodel import convert_model_to_group
+            self.bn = convert_model_to_group(self.args.world_size, self.args.group_norm_size, self.bn)
+            self.sync_bn = nn.BatchNorm1d(sizes[-1], affine=False)
+            self.sync_bn = nn.SyncBatchNorm.convert_sync_batchnorm(self.sync_bn)
     def forward_baseline(self, y1, y2):
         z1 = self.projector(self.encoder_q(y1))
         z2 = self.projector(self.encoder_q(y2))
@@ -309,10 +321,47 @@ class BarlowTwins(nn.Module):
         off_diag = off_diagonal(c).pow_(2).sum()
         loss = on_diag + self.args.lambd * off_diag
         return loss
+
+    def forward_detach_baseline(self, y1, y2):
+        z1 = self.projector(self.encoder_q(y1))
+        z2 = self.projector(self.encoder_q(y2))
+
+        # empirical cross-correlation matrix
+        c1 = self.bn(z1).T @ self.bn(z2.detach())
+        c2 = self.bn(z1.detach()).T @ self.bn(z2)
+        c = (c1 + c2) / 2
+        # sum the cross-correlation matrix between all gpus
+        c.div_(self.overall_batch_size)
+        torch.distributed.all_reduce(c)
+
+        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+        off_diag = off_diagonal(c).pow_(2).sum()
+        loss = on_diag + self.alpha * off_diag
+        return loss
+
+    def forward_loco(self, y1, y2):
+        z1 = self.projector(self.encoder_q(y1))
+        z2 = self.projector(self.encoder_q(y2))
+
+        # empirical cross-correlation matrix
+        c1 = self.bn(z1).T @ self.sync_bn(z2.detach())
+        c2 = self.sync_bn(z1.detach()).T @ self.bn(z2)
+        c = (c1 + c2) / 2
+        # sum the cross-correlation matrix between all gpus
+        c.div_(self.overall_batch_size)
+        torch.distributed.all_reduce(c)
+
+        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+        off_diag = off_diagonal(c).pow_(2).sum()
+        loss = on_diag + self.alpha * off_diag
+        return loss
     def forward(self,y1,y2):
         if self.type==0:
             return self.forward_baseline(y1,y2)
-
+        elif self.type==1:
+            return self.forward_detach_baseline(y1, y2)
+        elif self.type == 2:
+            return self.forward_loco(y1, y2)
 
 class LARS(optim.Optimizer):
     def __init__(self, params, lr, weight_decay=0, momentum=0.9, eta=0.001,
