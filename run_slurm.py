@@ -3533,7 +3533,7 @@ elif args.mode==8:
                             command_line="python3 main.py %s --epochs=%d " \
                                          "--batch-size=%d --learning-rate-weights=%f --learning-rate-biases=%f " \
                                         "--weight-decay=1e-6 --lambd=%f --type=%d --knn_neighbor=20 " \
-                                         "--knn_freq=1 --knn_batch_size=%d "%(args.data,epoch,
+                                         "--knn_freq=1 --knn_batch_size=%d --tensorboard=1 "%(args.data,epoch,
                                            batch_size,lr_w,lr_bias,alpha,args.type,256 )
                             write_slurm_sh_faster("BTtype%d_epoch%d" % (args.type,epoch), command_line, queue_name,
                                                   gpu_memory=False, environment=0)
