@@ -48,8 +48,27 @@ parser.add_argument('--print-freq', default=10, type=int, metavar='N',
 parser.add_argument('--checkpoint-dir', default='./checkpoint/', type=Path,
                     metavar='DIR', help='path to checkpoint directory')
 parser.add_argument("--type",default=0,help="different type for BT")
-
-
+parser.add_argument("--knn_freq",type=int,default=10, help="report current accuracy under specific iterations")
+parser.add_argument("--knn_batch_size",type=int, default=128, help="default batch size for knn eval")
+parser.add_argument("--knn_neighbor",type=int,default=200,help="nearest neighbor used to decide the labels")
+parser.add_argument("--tensorboard",type=int,default=0,help="use tensorboard or not")
+def mkdir(path):
+    path=path.strip()
+    path=path.rstrip("\\")
+    isExists=os.path.exists(path)
+    if not isExists:
+        sleep_time = random.random()
+        time.sleep(sleep_time)#in order to avoid same directory collision#gen file before submitting jobs
+        if not os.path.exists(path):
+            try:
+                os.makedirs(path)
+            except:
+                return False
+        print(path + " created")
+        return True
+    else:
+        print (path+' existed')
+        return False
 def main():
     args = parser.parse_args()
     args.ngpus_per_node = torch.cuda.device_count()
@@ -142,7 +161,25 @@ def main_worker(gpu, args):
     test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=per_device_batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True, sampler=test_sampler, drop_last=False)
-
+    writer = None
+    if args.tensorboard:
+        # tensorboard --logdir=Tensorboard --port=8081 --bind_all
+        from tensorboardX import SummaryWriter
+        log_tensor = os.path.join(args.checkpoint_dir, 'Tensorboard')
+        if args.gpu == 0:
+            mkdir(log_tensor)
+        time.sleep(5)
+        check_dir = os.path.join(log_tensor, "Data")
+        if args.gpu == 0:
+            mkdir(check_dir)
+        time.sleep(5)
+        check_dir = os.path.join(log_tensor, "data")
+        if args.gpu == 0:
+            mkdir(check_dir)
+        time.sleep(5)
+        writer = SummaryWriter(log_tensor)
+        params = vars(args)
+        writer.add_text('Text', str(params))
     start_time = time.time()
     scaler = torch.cuda.amp.GradScaler()
     for epoch in range(start_epoch, args.epochs):
@@ -153,7 +190,7 @@ def main_worker(gpu, args):
             adjust_learning_rate(args, optimizer, loader, step)
             optimizer.zero_grad()
             with torch.cuda.amp.autocast():
-                loss = model.forward(y1, y2)
+                loss = model(y1, y2)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -171,6 +208,8 @@ def main_worker(gpu, args):
         print("gpu consuming after cleaning:", torch.cuda.memory_allocated() / 1024 / 1024)
         knn_test_acc = knn_monitor(model.module.encoder_q, val_loader, test_loader,
                                    global_k=min(args.knn_neighbor, len(val_loader.dataset)))
+        if writer is not None and args.gpu == 0:
+            writer.add_scalars('Data/KNN_Acc', {'knn_acc': knn_test_acc}, epoch)
         print({'*KNN monitor Accuracy': knn_test_acc})
         if args.rank == 0:
             # save checkpoint
@@ -238,8 +277,7 @@ class BarlowTwins(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.backbone = models.__dict__['resnet50'](zero_init_residual=True)#torchvision.models.resnet50(zero_init_residual=True)
-        self.backbone.fc = nn.Identity()
+        self.encoder_q = models.__dict__['resnet50'](zero_init_residual=True)#torchvision.models.resnet50(zero_init_residual=True)
         self.type = args.type
         # projector
         sizes = [2048] + list(map(int, args.projector.split('-')))
@@ -257,8 +295,8 @@ class BarlowTwins(nn.Module):
         self.bn = nn.BatchNorm1d(sizes[-1], affine=False)
 
     def forward_baseline(self, y1, y2):
-        z1 = self.projector(self.backbone(y1))
-        z2 = self.projector(self.backbone(y2))
+        z1 = self.projector(self.encoder_q(y1))
+        z2 = self.projector(self.encoder_q(y2))
 
         # empirical cross-correlation matrix
         c = self.bn(z1).T @ self.bn(z2)
