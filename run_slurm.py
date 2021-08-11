@@ -3526,7 +3526,7 @@ elif args.mode==5:
 elif args.mode==8:
     if args.type==0 or args.type==1:
         for epoch in [100]:
-            for batch_size in [1024]:
+            for batch_size in [2048]:
                 for lr_w in [0.2]:
                     for lr_bias in [0.0048]:
                         for alpha in [0.51]:
@@ -3535,9 +3535,14 @@ elif args.mode==8:
                                         "--weight-decay=1e-6 --lambd=%f --type=%d --knn_neighbor=20 " \
                                          "--knn_freq=1 --knn_batch_size=%d --tensorboard=1 "%(args.data,epoch,
                                            batch_size,lr_w,lr_bias,alpha,args.type,256 )
-                            write_slurm_sh_faster("BTtype%d_%d_epoch%d" % (args.type,batch_size,epoch), command_line, queue_name,
+                            if args.node==1:
+                                write_slurm_sh_faster("BTtype%d_%d_epoch%d" % (args.type,batch_size,epoch), command_line, queue_name,
                                                   gpu_memory=False, environment=0)
-
+                            else:
+                                write_slurm_sh_multi2(
+                                    "BTtype%d_%d_epoch%d" % (args.type, batch_size, epoch),
+                                    command_line, queue_name, nodes=args.node, gpu_per_node=args.gpu,
+                                    gpu_memory=False, environment=0)
     elif args.type==2:
         for epoch in [100]:
             for batch_size in [1024]:
