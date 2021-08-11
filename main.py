@@ -176,11 +176,11 @@ def main_worker(gpu, args):
             mkdir(log_tensor)
         time.sleep(5)
         check_dir = os.path.join(log_tensor, "Data")
-        if args.gpu == 0:
+        if args.rank == 0:
             mkdir(check_dir)
         time.sleep(5)
         check_dir = os.path.join(log_tensor, "data")
-        if args.gpu == 0:
+        if args.rank == 0:
             mkdir(check_dir)
         time.sleep(5)
         writer = SummaryWriter(log_tensor)
