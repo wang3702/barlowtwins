@@ -221,7 +221,7 @@ def write_slurm_sh_multi2(id,command_line, queue_name="learnfair",nodes=1,
         file.write("dist_url+=:40000\n")
         file.write("export MASTER_ADDR=${SLURM_NODELIST:0:9}${SLURM_NODELIST:10:3}\n")
         file.write("export MASTER_PORT=29500\n")
-        file.write("srun --label "+command_line + " --slurm=1 --dist_url=$dist_url &\n")
+        file.write("srun --label "+command_line + " &\n")
         file.write("wait $!\n")
         file.write("set +x \n")
         file.write("echo ..::Job Finished, but No, AGI is to BE Solved::.. \n")
