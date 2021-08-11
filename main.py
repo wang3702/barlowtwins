@@ -331,12 +331,12 @@ class BarlowTwins(nn.Module):
         c2 = self.bn(z1.detach()).T @ self.bn(z2)
         c = (c1 + c2) / 2
         # sum the cross-correlation matrix between all gpus
-        c.div_(self.overall_batch_size)
+        c.div_(self.args.batch_size)
         torch.distributed.all_reduce(c)
 
         on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
         off_diag = off_diagonal(c).pow_(2).sum()
-        loss = on_diag + self.alpha * off_diag
+        loss = on_diag + self.args.lambd * off_diag
         return loss
 
     def forward_loco(self, y1, y2):
@@ -348,12 +348,12 @@ class BarlowTwins(nn.Module):
         c2 = self.sync_bn(z1.detach()).T @ self.bn(z2)
         c = (c1 + c2) / 2
         # sum the cross-correlation matrix between all gpus
-        c.div_(self.overall_batch_size)
+        c.div_(self.args.batch_size)
         torch.distributed.all_reduce(c)
 
         on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
         off_diag = off_diagonal(c).pow_(2).sum()
-        loss = on_diag + self.alpha * off_diag
+        loss = on_diag + self.args.lambd * off_diag
         return loss
     def forward(self,y1,y2):
         if self.type==0:
