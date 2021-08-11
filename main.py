@@ -47,7 +47,7 @@ parser.add_argument('--print-freq', default=10, type=int, metavar='N',
                     help='print frequency')
 parser.add_argument('--checkpoint-dir', default='./checkpoint/', type=Path,
                     metavar='DIR', help='path to checkpoint directory')
-parser.add_argument("--type",default=0,help="different type for BT")
+parser.add_argument("--type",default=0,type=int,help="different type for BT")
 parser.add_argument("--knn_freq",type=int,default=10, help="report current accuracy under specific iterations")
 parser.add_argument("--knn_batch_size",type=int, default=128, help="default batch size for knn eval")
 parser.add_argument("--knn_neighbor",type=int,default=200,help="nearest neighbor used to decide the labels")
@@ -118,7 +118,7 @@ def main_worker(gpu, args):
         else:
             param_weights.append(param)
     parameters = [{'params': param_weights}, {'params': param_biases}]
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu])
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[gpu],find_unused_parameters=True)
     optimizer = LARS(parameters, lr=0, weight_decay=args.weight_decay,
                      weight_decay_filter=True,
                      lars_adaptation_filter=True)
