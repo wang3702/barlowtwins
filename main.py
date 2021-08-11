@@ -172,7 +172,7 @@ def main_worker(gpu, args):
         # tensorboard --logdir=Tensorboard --port=8081 --bind_all
         from tensorboardX import SummaryWriter
         log_tensor = os.path.join(args.checkpoint_dir, 'Tensorboard')
-        if args.gpu == 0:
+        if args.rank == 0:
             mkdir(log_tensor)
         time.sleep(5)
         check_dir = os.path.join(log_tensor, "Data")
