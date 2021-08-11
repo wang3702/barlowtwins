@@ -3538,7 +3538,22 @@ elif args.mode==8:
                             write_slurm_sh_faster("BTtype%d_epoch%d" % (args.type,epoch), command_line, queue_name,
                                                   gpu_memory=False, environment=0)
 
-
+    elif args.type==2:
+        for epoch in [100]:
+            for batch_size in [256]:
+                for lr_w in [0.2]:
+                    for lr_bias in [0.0048]:
+                        for alpha in [0.51]:
+                            for group_size in [2,4,8,16,32]:
+                                command_line = "python3 main.py %s --epochs=%d " \
+                                               "--batch-size=%d --learning-rate-weights=%f --learning-rate-biases=%f " \
+                                               "--weight-decay=1e-6 --lambd=%f --type=%d --knn_neighbor=20 " \
+                                               "--knn_freq=1 --knn_batch_size=%d --tensorboard=1 --group_norm_size=%d " % (args.data, epoch,
+                                                                                                      batch_size, lr_w,
+                                                                                                      lr_bias, alpha,
+                                                                                                      args.type, 256,group_size)
+                                write_slurm_sh_faster("BTtype%d_%d_epoch%d" % (args.type,group_size, epoch), command_line, queue_name,
+                                                      gpu_memory=False, environment=0)
 elif args.mode==0:
     #used for finetuning, which will submit finetune jobs and a comment for which
     use_bn=args.type
