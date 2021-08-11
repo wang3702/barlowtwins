@@ -20,6 +20,9 @@ from torch import nn, optim
 import torch
 import torchvision
 import torchvision.transforms as transforms
+from imagenet import imagenet
+from knn_monitor import knn_monitor
+import ResNet as models
 
 parser = argparse.ArgumentParser(description='Barlow Twins Training')
 parser.add_argument('data', type=Path, metavar='DIR',
@@ -44,6 +47,7 @@ parser.add_argument('--print-freq', default=100, type=int, metavar='N',
                     help='print frequency')
 parser.add_argument('--checkpoint-dir', default='./checkpoint/', type=Path,
                     metavar='DIR', help='path to checkpoint directory')
+parser.add_argument("--type",default=0,help="different type for BT")
 
 
 def main():
@@ -117,6 +121,27 @@ def main_worker(gpu, args):
     loader = torch.utils.data.DataLoader(
         dataset, batch_size=per_device_batch_size, num_workers=args.workers,
         pin_memory=True, sampler=sampler)
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    testdir = os.path.join(args.data, 'val')
+    traindir = os.path.join(args.data, 'train')
+    transform_test = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        normalize,
+    ])
+    # val_dataset = datasets.ImageFolder(traindir,transform_test)
+    val_dataset = imagenet(traindir, 0.2, transform_test)
+    test_dataset = torchvision.datasets.ImageFolder(testdir, transform_test)
+    val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset)
+    test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset)
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=per_device_batch_size, shuffle=False,
+        num_workers=args.workers, pin_memory=True, sampler=val_sampler, drop_last=False)
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=per_device_batch_size, shuffle=False,
+        num_workers=args.workers, pin_memory=True, sampler=test_sampler, drop_last=False)
 
     start_time = time.time()
     scaler = torch.cuda.amp.GradScaler()
@@ -141,6 +166,12 @@ def main_worker(gpu, args):
                                  time=int(time.time() - start_time))
                     print(json.dumps(stats))
                     print(json.dumps(stats), file=stats_file)
+        print("gpu consuming before cleaning:", torch.cuda.memory_allocated() / 1024 / 1024)
+        torch.cuda.empty_cache()
+        print("gpu consuming after cleaning:", torch.cuda.memory_allocated() / 1024 / 1024)
+        knn_test_acc = knn_monitor(model.module.encoder_q, val_loader, test_loader,
+                                   global_k=min(args.knn_neighbor, len(val_loader.dataset)))
+        print({'*KNN monitor Accuracy': knn_test_acc})
         if args.rank == 0:
             # save checkpoint
             state = dict(epoch=epoch + 1, model=model.state_dict(),
@@ -184,13 +215,32 @@ def off_diagonal(x):
     return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
 
 
+class global_ops(nn.Module):
+    def __init__(self):
+        super(global_ops, self).__init__()
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+
+    def forward(self,input):
+        """
+
+        Args:
+            x: N*[B*C*H*W]
+            feature map
+        Returns:
+
+        """
+        x = self.avgpool(input)
+        x = torch.flatten(x, 1)
+        return x
+
 class BarlowTwins(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.backbone = torchvision.models.resnet50(zero_init_residual=True)
+        self.backbone = models.__dict__['resnet50'](zero_init_residual=True)#torchvision.models.resnet50(zero_init_residual=True)
         self.backbone.fc = nn.Identity()
-
+        self.type = args.type
         # projector
         sizes = [2048] + list(map(int, args.projector.split('-')))
         layers = []
@@ -200,11 +250,13 @@ class BarlowTwins(nn.Module):
             layers.append(nn.ReLU(inplace=True))
         layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
         self.projector = nn.Sequential(*layers)
+        self.projector = nn.Sequential(global_ops(),
+                                       self.projector)
 
         # normalization layer for the representations z1 and z2
         self.bn = nn.BatchNorm1d(sizes[-1], affine=False)
 
-    def forward(self, y1, y2):
+    def forward_baseline(self, y1, y2):
         z1 = self.projector(self.backbone(y1))
         z2 = self.projector(self.backbone(y2))
 
@@ -219,6 +271,9 @@ class BarlowTwins(nn.Module):
         off_diag = off_diagonal(c).pow_(2).sum()
         loss = on_diag + self.args.lambd * off_diag
         return loss
+    def forward(self,y1,y2):
+        if self.type==0:
+            return self.forward_baseline(y1,y2)
 
 
 class LARS(optim.Optimizer):
@@ -243,7 +298,7 @@ class LARS(optim.Optimizer):
                     continue
 
                 if not g['weight_decay_filter'] or not self.exclude_bias_and_norm(p):
-                    print(p.shape)
+                    #print(p.shape)
                     dp = dp.add(p, alpha=g['weight_decay'])
 
                 if not g['lars_adaptation_filter'] or not self.exclude_bias_and_norm(p):
